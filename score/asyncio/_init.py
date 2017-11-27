@@ -27,6 +27,7 @@
 from score.init import ConfiguredModule
 import asyncio
 import warnings
+import threading
 
 
 defaults = {
@@ -63,7 +64,8 @@ def init(confdict):
         import score.asyncio
         raise InitializationError(
             score.asyncio, 'Invalid value for "backend": ' + conf['backend'])
-    return ConfiguredAsyncioModule(backend, use_global_loop, loop)
+    return ConfiguredAsyncioModule(
+        conf['backend'], conf['use_global_loop'], loop)
 
 
 class ConfiguredAsyncioModule(ConfiguredModule):
@@ -77,6 +79,8 @@ class ConfiguredAsyncioModule(ConfiguredModule):
     def await_multiple(self, coroutines):
         results = []
         for coroutine in coroutines:
+            # TODO: This code is executing the coroutines sequentially.
+            # It should rather run them inside the same loop.
             try:
                 result = self.await(coroutine)
             except Exception as e:

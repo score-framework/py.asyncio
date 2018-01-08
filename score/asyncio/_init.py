@@ -40,6 +40,15 @@ def init(confdict):
     """
     Initializes this module according to the :ref:`SCORE module initialization
     guidelines <module_initialization>` with the following configuration keys:
+
+    :confkey:`backend` :confdefault:`default`
+        The library to use for creating the event loop. Current valid values
+        are ``pyuv``, ``uvloop`` and ``default``.
+
+    :confkey:`use_global_loop` :confdefault:`False`
+        Whether the global loop object should be used. The "global" loop is the
+        one returned by :func:`asyncio.get_event_loop()`.
+
     """
     conf = defaults.copy()
     conf.update(confdict)
@@ -69,6 +78,9 @@ def init(confdict):
 
 
 class ConfiguredAsyncioModule(ConfiguredModule):
+    """
+    This module's :class:`configuration class <score.init.ConfiguredModule>`.
+    """
 
     def __init__(self, backend, use_global_loop, loop):
         super().__init__("score.asyncio")
@@ -76,20 +88,43 @@ class ConfiguredAsyncioModule(ConfiguredModule):
         self.use_global_loop = use_global_loop
         self.loop = loop
 
-    def await_multiple(self, coroutines):
-        results = []
-        for coroutine in coroutines:
-            # TODO: This code is executing the coroutines sequentially.
-            # It should rather run them inside the same loop.
-            try:
-                result = self.await(coroutine)
-            except Exception as e:
-                results.append((False, e))
-            else:
-                results.append((True, result))
-        return results
-
     def await(self, coroutine):
+        """
+        Blocks until given *coroutine* is finished and returns the result (or
+        raises the exception).
+
+        The builtin method :meth:`AbstractEventLoop.run_until_complete` is
+        usually sufficient to wait for a coroutine to finish. But if you do not
+        know, whether the event loop is running or not, you will need a
+        different approach. This method can be used in these circumstances. The
+        following example will always work, regardless of the current loop
+        state:
+
+        >>> import asyncio
+        >>> @asyncio.coroutine
+        ... def foo():
+        ...     return 1
+        ...
+        >>> @asyncio.coroutine
+        ... def bar():
+        ...     return 1 / 0
+        ...
+        >>> foo()
+        <generator object foo at 0x7fea86b20e08>
+        >>> score.asyncio.await(foo())
+        1
+        >>> score.asyncio.await(bar())
+        Traceback (most recent call last):
+          File "<console>", line 1, in <module>
+          File "/home/can/Projects/score/py.asyncio/score/asyncio/_init.py", line 107, in await
+            return self.loop.run_until_complete(coroutine)
+          File "/usr/lib/python3.6/asyncio/base_events.py", line 467, in run_until_complete
+            return future.result()
+          File "/usr/lib/python3.6/asyncio/coroutines.py", line 210, in coro
+            res = func(*args, **kw)
+          File "<console>", line 3, in bar
+        ZeroDivisionError: division by zero
+        """
         if not self.loop.is_running():
             try:
                 # only possible with python>=3.5:
@@ -107,6 +142,36 @@ class ConfiguredAsyncioModule(ConfiguredModule):
             return self._sync_using_thread(coroutine)
         else:
             return self._sync_in_running_loop(coroutine)
+
+    def await_multiple(self, coroutines):
+        """
+        Just like :meth:`await`, but awaits the completion of multiple
+        *coroutines*. The return value is different though: the method will
+        provide a list of 2-tuples, where the first value is a *bool* indicating
+        successful execution of the coroutine and the second value is the
+        exception itself or the return value.
+
+        Example with two coroutines, the first successfully returning ``1``,
+        while the other raises a `ZeroDivisionError`:
+
+        .. code-block:: python
+
+            [
+                (True, 1),
+                (False, ZeroDivisionError('division by zero',)),
+            ]
+        """
+        results = []
+        for coroutine in coroutines:
+            # TODO: This code is executing the coroutines sequentially.
+            # It should rather run them inside the same loop.
+            try:
+                result = self.await(coroutine)
+            except Exception as e:
+                results.append((False, e))
+            else:
+                results.append((True, result))
+        return results
 
     def _sync_using_thread(self, coroutine):
         result = None

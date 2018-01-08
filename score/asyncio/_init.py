@@ -31,7 +31,7 @@ import threading
 
 
 defaults = {
-    "backend": "default",
+    "backend": "builtin",
     "use_global_loop": False,
 }
 
@@ -41,9 +41,9 @@ def init(confdict):
     Initializes this module according to the :ref:`SCORE module initialization
     guidelines <module_initialization>` with the following configuration keys:
 
-    :confkey:`backend` :confdefault:`default`
+    :confkey:`backend` :confdefault:`builtin`
         The library to use for creating the event loop. Current valid values
-        are ``pyuv``, ``uvloop`` and ``default``.
+        are ``pyuv``, ``uvloop`` and ``builtin``.
 
     :confkey:`use_global_loop` :confdefault:`False`
         Whether the global loop object should be used. The "global" loop is the
@@ -64,7 +64,7 @@ def init(confdict):
             warnings.warn(
                 'Ignoring value of "use_global_loop" when using uvloop backend')
         loop = uvloop.new_event_loop()
-    elif conf['backend'] == 'default':
+    elif conf['backend'] == 'builtin':
         if conf['use_global_loop']:
             loop = asyncio.get_event_loop()
         else:

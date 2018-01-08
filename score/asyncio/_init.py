@@ -152,7 +152,7 @@ class ConfiguredAsyncioModule(ConfiguredModule):
         exception itself or the return value.
 
         Example with two coroutines, the first successfully returning ``1``,
-        while the other raises a `ZeroDivisionError`:
+        while the other raising a `ZeroDivisionError`:
 
         .. code-block:: python
 

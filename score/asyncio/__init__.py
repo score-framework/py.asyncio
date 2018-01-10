@@ -25,6 +25,7 @@
 # Licensee has his registered seat, an establishment or assets.
 
 from ._init import init, ConfiguredAsyncioModule, LoopToken
+from .worker import Worker
 
 
-__all__ = ('init', 'ConfiguredAsyncioModule', 'LoopToken')
+__all__ = ('init', 'ConfiguredAsyncioModule', 'LoopToken', 'Worker')

@@ -24,7 +24,7 @@
 # the discretion of STRG.AT GmbH also the competent court, in whose district the
 # Licensee has his registered seat, an establishment or assets.
 
-from ._init import init, ConfiguredAsyncioModule
+from ._init import init, ConfiguredAsyncioModule, LoopToken
 
 
-__all__ = ('init', 'ConfiguredAsyncioModule')
+__all__ = ('init', 'ConfiguredAsyncioModule', 'LoopToken')

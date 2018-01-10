@@ -24,15 +24,17 @@
 # the discretion of STRG.AT GmbH also the competent court, in whose district the
 # Licensee has his registered seat, an establishment or assets.
 
-from score.init import ConfiguredModule
+from score.init import ConfiguredModule, parse_bool, parse_time_interval
 import asyncio
 import warnings
 import threading
+import time
 
 
 defaults = {
     "backend": "builtin",
     "use_global_loop": False,
+    "stop_timeout": None,
 }
 
 
@@ -41,7 +43,7 @@ def init(confdict):
     Initializes this module according to the :ref:`SCORE module initialization
     guidelines <module_initialization>` with the following configuration keys:
 
-    :confkey:`backend` :confdefault:`builtin`
+    :confkey:`backend` :confdefault:`"builtin"`
         The library to use for creating the event loop. Current valid values
         are ``pyuv``, ``uvloop`` and ``builtin``.
 
@@ -49,23 +51,38 @@ def init(confdict):
         Whether the global loop object should be used. The "global" loop is the
         one returned by :func:`asyncio.get_event_loop()`.
 
+    :confkey:`stop_timeout` :confdefault:`None`
+        Defines how long the module will wait for all tasks running in the loop
+        to finish when stopping the loop. The value will be interpreted through
+        a call to :func:`score.init.parse_time_interval`.
+
+        The default value (`None`) indicates, that the module will wait
+        indefinitely. If you want to the loop to terminate immediately, without
+        waiting for tasks at all, you must pass "0".
+
     """
     conf = defaults.copy()
     conf.update(confdict)
+    use_global_loop = parse_bool(conf['use_global_loop'])
+    stop_timeout = conf['stop_timeout']
+    if stop_timeout == 'None':
+        stop_timeout = None
+    if stop_timeout is not None:
+        stop_timeout = parse_time_interval(stop_timeout)
     if conf['backend'] == 'pyuv':
         import pyuv
-        if conf['use_global_loop']:
+        if use_global_loop:
             loop = pyuv.Loop.default_loop()
         else:
             loop = pyuv.Loop()
     elif conf['backend'] == 'uvloop':
         import uvloop
-        if conf['use_global_loop']:
+        if use_global_loop:
             warnings.warn(
                 'Ignoring value of "use_global_loop" when using uvloop backend')
         loop = uvloop.new_event_loop()
     elif conf['backend'] == 'builtin':
-        if conf['use_global_loop']:
+        if use_global_loop:
             loop = asyncio.get_event_loop()
         else:
             loop = asyncio.new_event_loop()
@@ -74,7 +91,7 @@ def init(confdict):
         raise InitializationError(
             score.asyncio, 'Invalid value for "backend": ' + conf['backend'])
     return ConfiguredAsyncioModule(
-        conf['backend'], conf['use_global_loop'], loop)
+        conf['backend'], use_global_loop, stop_timeout, loop)
 
 
 class ConfiguredAsyncioModule(ConfiguredModule):
@@ -82,23 +99,41 @@ class ConfiguredAsyncioModule(ConfiguredModule):
     This module's :class:`configuration class <score.init.ConfiguredModule>`.
     """
 
-    def __init__(self, backend, use_global_loop, loop):
+    def __init__(self, backend, use_global_loop, stop_timeout, loop):
         super().__init__("score.asyncio")
         self.backend = backend
         self.use_global_loop = use_global_loop
+        self.stop_timeout = stop_timeout
         self.loop = loop
+        self.loop_tokens = []
+        self.loop_lock = threading.RLock()
+
+    def __del__(self):
+        """
+        Stops the loop, if it is still running. Will also :meth:`close()
+        <asyncio.AbstractEventLoop.close>` the loop if it is not the global
+        event loop.
+        """
+        if self.loop.is_running():
+            event = threading.Event()
+            self.loop.call_soon_threadsafe(self.__stop_loop, event)
+            event.wait()
+        if not self.use_global_loop:
+            self.loop.close()
 
     def await(self, coroutine):
         """
         Blocks until given *coroutine* is finished and returns the result (or
         raises the exception).
 
-        The builtin method :meth:`AbstractEventLoop.run_until_complete` is
-        usually sufficient to wait for a coroutine to finish. But if you do not
-        know, whether the event loop is running or not, you will need a
-        different approach. This method can be used in these circumstances. The
-        following example will always work, regardless of the current loop
-        state:
+        This method will acquire a :term:`loop token`, schedule the coroutine
+        for execution in the configured event loop, await its termination and
+        return the result (or raise the exception).
+
+        This is very similar to the builtin method
+        :meth:`asyncio.AbstractEventLoop.run_until_complete`, but will work when
+        different clients try to execute a coroutine simultanously, regardless
+        of the current loop state:
 
         >>> import asyncio
         >>> @asyncio.coroutine
@@ -125,23 +160,22 @@ class ConfiguredAsyncioModule(ConfiguredModule):
           File "<console>", line 3, in bar
         ZeroDivisionError: division by zero
         """
-        if not self.loop.is_running():
-            try:
-                # only possible with python>=3.5:
-                # test if there is another event loop running in this thread.
-                from asyncio.events import _get_running_loop
-            except ImportError:
-                pass
-            else:
-                # Only one loop can be active per thread. If we are able to
-                # detect, that there is no running loop, we can just start the
-                # loop inside this thread. Otherwise, we will need to spawn a
-                # new thread for running the loop (see _sync_using_thread).
-                if not _get_running_loop():
-                    return self.loop.run_until_complete(coroutine)
-            return self._sync_using_thread(coroutine)
-        else:
+        if self.loop.is_running():
             return self._sync_in_running_loop(coroutine)
+        try:
+            # only possible with python>=3.5:
+            # test if there is another event loop running in this thread.
+            from asyncio.events import _get_running_loop
+        except ImportError:
+            pass
+        else:
+            # Only one loop can be active per thread. If we are able to
+            # detect, that there is no running loop, we can just start the
+            # loop inside this thread. Otherwise, we will need to spawn a
+            # new thread for running the loop (see _sync_using_thread).
+            if not _get_running_loop():
+                return self.loop.run_until_complete(coroutine)
+        return self._sync_using_thread(coroutine)
 
     def await_multiple(self, coroutines):
         """
@@ -173,25 +207,73 @@ class ConfiguredAsyncioModule(ConfiguredModule):
                 results.append((True, result))
         return results
 
-    def _sync_using_thread(self, coroutine):
-        result = None
-        exception = None
+    def start_loop(self):
+        """
+        Makes sure the configured :attr:`loop` is running. Will possibly start
+        the loop in a different thread and return a :term:`loop token`.
 
-        def run():
-            nonlocal exception, result
+        This method is thread-safe.
+
+        See :ref:`asyncio_start_loop` for usage details.
+        """
+        with self.loop_lock:
+            token = LoopToken(self)
+            self.loop_tokens.append(token)
+            if not self.loop.is_running():
+                self.loop_thread = threading.Thread(
+                    target=self.loop.run_forever)
+                self.loop_thread.start()
+            return token
+
+    def release_loop(self, token):
+        """
+        Releases a previously acquired *token*.
+
+        See :ref:`asyncio_start_loop` for usage details.
+        """
+        with self.loop_lock:
             try:
-                result = self.loop.run_until_complete(coroutine)
-            except Exception as e:
-                exception = e
+                self.loop_tokens.remove(token)
+            except KeyError:
+                return
+            token.held = False
+            if not self.loop_tokens and self.loop.is_running():
+                event = threading.Event()
+                self.loop.call_soon_threadsafe(self.__stop_loop, event)
+                if not self.loop_tokens:
+                    self.loop_thread.join()
+                event.wait()
 
-        thread = threading.Thread(target=run)
-        thread.start()
-        thread.join()
+    def __stop_loop(self, event):
+        def stop(future=None):
+            if not self.loop.is_running() or self.loop_tokens:
+                event.set()
+                return
+            pending_tasks = [t for t in asyncio.Task.all_tasks(self.loop)
+                             if not t.done()]
+            if not pending_tasks or self.stop_timeout == 0:
+                self.loop.stop()
+                event.set()
+                return
+            all_done = asyncio.shield(asyncio.wait(
+                pending_tasks, loop=self.loop), loop=self.loop)
+            if self.stop_timeout is None:
+                wait_task = self.loop.create_task(all_done)
+                wait_task.add_done_callback(stop)
+            else:
+                timeout = self.stop_timeout - (time.time() - stop_time)
+                if timeout <= 0:
+                    self.loop.stop()
+                    event.set()
+                wait_task = self.loop.create_task(asyncio.wait_for(
+                    all_done, timeout, loop=self.loop))
+                wait_task.add_done_callback(stop)
+        stop_time = time.time()
+        stop()
 
-        if exception is not None:
-            raise exception
-
-        return result
+    def _sync_using_thread(self, coroutine):
+        with self.start_loop():
+            return self._sync_in_running_loop(coroutine)
 
     def _sync_in_running_loop(self, coroutine):
         result = None
@@ -219,3 +301,33 @@ class ConfiguredAsyncioModule(ConfiguredModule):
         if exception:
             raise exception
         return result
+
+
+class LoopToken:
+    """
+    A :term:`token <loop token>` provided by the configured score.asyncio
+    module. The configured asyncio will keep running as long as this token is
+    held. Use :meth:`release` to indicate that you're done using the loop.
+    """
+
+    def __init__(self, conf):
+        self.conf = conf
+        self.held = True
+
+    def __del__(self):
+        if self.held:
+            self.conf.release_loop(self)
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.conf.release_loop(self)
+
+    def release(self):
+        """
+        Releases this token.
+
+        See :ref:`asyncio_start_loop` for details.
+        """
+        self.conf.release_loop(self)

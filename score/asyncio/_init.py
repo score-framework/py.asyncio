@@ -56,7 +56,7 @@ def init(confdict):
         to finish when stopping the loop. The value will be interpreted through
         a call to :func:`score.init.parse_time_interval`.
 
-        The default value (`None`) indicates, that the module will wait
+        The default value `None` indicates that the module will wait
         indefinitely. If you want to the loop to terminate immediately, without
         waiting for tasks at all, you must pass "0".
 

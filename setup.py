@@ -1,4 +1,4 @@
-# Copyright © 2017 STRG.AT GmbH, Vienna, Austria
+# Copyright © 2017,2018 STRG.AT GmbH, Vienna, Austria
 #
 # This file is part of the The SCORE Framework.
 #
@@ -33,7 +33,7 @@ with open(os.path.join(here, 'README.rst')) as f:
 
 setup(
     name='score.asyncio',
-    version='0.1.0',
+    version='0.2.0',
     description='Asyncio helpers of The SCORE Framework',
     long_description=README,
     author='strg.at',

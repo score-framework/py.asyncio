@@ -24,7 +24,8 @@
 # the discretion of STRG.AT GmbH also the competent court, in whose district the
 # Licensee has his registered seat, an establishment or assets.
 
-from score.init import ConfiguredModule, parse_bool, parse_time_interval
+from score.init import (
+    ConfiguredModule, InitializationError, parse_bool, parse_time_interval)
 import asyncio
 import warnings
 import threading
@@ -45,7 +46,7 @@ def init(confdict):
 
     :confkey:`backend` :confdefault:`"builtin"`
         The library to use for creating the event loop. Current valid values
-        are ``pyuv``, ``uvloop`` and ``builtin``.
+        are ``uvloop`` and ``builtin``.
 
     :confkey:`use_global_loop` :confdefault:`False`
         Whether the global loop object should be used. The "global" loop is the
@@ -69,13 +70,7 @@ def init(confdict):
         stop_timeout = None
     if stop_timeout is not None:
         stop_timeout = parse_time_interval(stop_timeout)
-    if conf['backend'] == 'pyuv':
-        import pyuv
-        if use_global_loop:
-            loop = pyuv.Loop.default_loop()
-        else:
-            loop = pyuv.Loop()
-    elif conf['backend'] == 'uvloop':
+    if conf['backend'] == 'uvloop':
         import uvloop
         if use_global_loop:
             warnings.warn(
@@ -160,22 +155,32 @@ class ConfiguredAsyncioModule(ConfiguredModule):
           File "<console>", line 3, in bar
         ZeroDivisionError: division by zero
         """
-        if self.loop.is_running():
-            return self._sync_in_running_loop(coroutine)
-        try:
-            # only possible with python>=3.5:
-            # test if there is another event loop running in this thread.
-            from asyncio.events import _get_running_loop
-        except ImportError:
-            pass
-        else:
-            # Only one loop can be active per thread. If we are able to
-            # detect, that there is no running loop, we can just start the
-            # loop inside this thread. Otherwise, we will need to spawn a
-            # new thread for running the loop (see _sync_using_thread).
-            if not _get_running_loop():
-                return self.loop.run_until_complete(coroutine)
-        return self._sync_using_thread(coroutine)
+        with self.start_loop():
+            result = None
+            exception = None
+            condition = threading.Condition()
+            finished = False
+
+            def resolve(future):
+                nonlocal exception, result, finished
+                exception = future.exception()
+                if exception is None:
+                    result = future.result()
+                with condition:
+                    finished = True
+                    condition.notify()
+
+            def create_task():
+                task = self.loop.create_task(coroutine)
+                task.add_done_callback(resolve)
+
+            self.loop.call_soon_threadsafe(create_task)
+            with condition:
+                condition.wait_for(lambda: finished)
+
+            if exception:
+                raise exception
+            return result
 
     def await_multiple(self, coroutines):
         """
@@ -270,37 +275,6 @@ class ConfiguredAsyncioModule(ConfiguredModule):
                 wait_task.add_done_callback(stop)
         stop_time = time.time()
         stop()
-
-    def _sync_using_thread(self, coroutine):
-        with self.start_loop():
-            return self._sync_in_running_loop(coroutine)
-
-    def _sync_in_running_loop(self, coroutine):
-        result = None
-        exception = None
-        condition = threading.Condition()
-        finished = False
-
-        def resolve(future):
-            nonlocal exception, result, finished
-            exception = future.exception()
-            if exception is None:
-                result = future.result()
-            with condition:
-                finished = True
-                condition.notify()
-
-        def create_task():
-            task = self.loop.create_task(coroutine)
-            task.add_done_callback(resolve)
-
-        self.loop.call_soon_threadsafe(create_task)
-        with condition:
-            condition.wait_for(lambda: finished)
-
-        if exception:
-            raise exception
-        return result
 
 
 class LoopToken:

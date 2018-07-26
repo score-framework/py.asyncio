@@ -33,7 +33,7 @@ with open(os.path.join(here, 'README.rst')) as f:
 
 setup(
     name='score.asyncio',
-    version='0.2.0',
+    version='0.2.1',
     description='Asyncio helpers of The SCORE Framework',
     long_description=README,
     author='strg.at',

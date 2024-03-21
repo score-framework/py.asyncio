@@ -1,4 +1,5 @@
 # Copyright © 2017,2018 STRG.AT GmbH, Vienna, Austria
+# Copyright © 2019-2023 Necdet Can Ateşman, Vienna, Austria
 #
 # This file is part of the The SCORE Framework.
 #
@@ -116,7 +117,7 @@ class ConfiguredAsyncioModule(ConfiguredModule):
         if not self.use_global_loop:
             self.loop.close()
 
-    def await(self, coroutine):
+    def await_(self, coroutine):
         """
         Blocks until given *coroutine* is finished and returns the result (or
         raises the exception).
@@ -141,12 +142,12 @@ class ConfiguredAsyncioModule(ConfiguredModule):
         ...
         >>> foo()
         <generator object foo at 0x7fea86b20e08>
-        >>> score.asyncio.await(foo())
+        >>> score.asyncio.await_(foo())
         1
-        >>> score.asyncio.await(bar())
+        >>> score.asyncio.await_.(bar())
         Traceback (most recent call last):
           File "<console>", line 1, in <module>
-          File "/home/can/Projects/score/py.asyncio/score/asyncio/_init.py", line 107, in await
+          File "/home/can/Projects/score/py.asyncio/score/asyncio/_init.py", line 107, in await_
             return self.loop.run_until_complete(coroutine)
           File "/usr/lib/python3.6/asyncio/base_events.py", line 467, in run_until_complete
             return future.result()
@@ -184,7 +185,7 @@ class ConfiguredAsyncioModule(ConfiguredModule):
 
     def await_multiple(self, coroutines):
         """
-        Just like :meth:`await`, but awaits the completion of multiple
+        Just like :meth:`await_`, but awaits the completion of multiple
         *coroutines*. The return value is different though: the method will
         provide a list of 2-tuples, where the first value is a *bool* indicating
         successful execution of the coroutine and the second value is the
@@ -205,7 +206,7 @@ class ConfiguredAsyncioModule(ConfiguredModule):
             # TODO: This code is executing the coroutines sequentially.
             # It should rather run them inside the same loop.
             try:
-                result = self.await(coroutine)
+                result = self.await_(coroutine)
             except Exception as e:
                 results.append((False, e))
             else:

@@ -2,6 +2,7 @@ from score.serve import Worker as WorkerBase
 import asyncio
 import abc
 import concurrent.futures
+import sys
 import threading
 
 try:
@@ -20,7 +21,7 @@ except ImportError:
 
         def queue_task():
             try:
-                task_future = asyncio.async(coro, loop=loop)
+                task_future = getattr(asyncio, 'async')(coro, loop=loop)
                 task_future.add_done_callback(done)
             except Exception as exc:
                 if future.set_running_or_notify_cancel():
@@ -153,32 +154,61 @@ class Worker(WorkerBase):
         This function will be called inside a running event loop.
         """
 
-    @asyncio.coroutine
-    def __prepare(self):
-        result = self._prepare()
-        if asyncio.iscoroutine(result):
-            result = yield from result
+    if sys.version_info[0] == 3 and sys.version_info[1] < 7:
 
-    @asyncio.coroutine
-    def __start(self):
-        result = self._start()
-        if asyncio.iscoroutine(result):
-            result = yield from result
+        @asyncio.coroutine
+        def __prepare(self):
+            result = self._prepare()
+            if asyncio.iscoroutine(result):
+                result = yield from result
 
-    @asyncio.coroutine
-    def __pause(self):
-        result = self._pause()
-        if asyncio.iscoroutine(result):
-            result = yield from result
+        @asyncio.coroutine
+        def __start(self):
+            result = self._start()
+            if asyncio.iscoroutine(result):
+                result = yield from result
 
-    @asyncio.coroutine
-    def __stop(self):
-        result = self._stop()
-        if asyncio.iscoroutine(result):
-            result = yield from result
+        @asyncio.coroutine
+        def __pause(self):
+            result = self._pause()
+            if asyncio.iscoroutine(result):
+                result = yield from result
 
-    @asyncio.coroutine
-    def __cleanup(self, exception):
-        result = self._cleanup(exception)
-        if asyncio.iscoroutine(result):
-            result = yield from result
+        @asyncio.coroutine
+        def __stop(self):
+            result = self._stop()
+            if asyncio.iscoroutine(result):
+                result = yield from result
+
+        @asyncio.coroutine
+        def __cleanup(self, exception):
+            result = self._cleanup(exception)
+            if asyncio.iscoroutine(result):
+                result = yield from result
+
+    else:
+
+        async def __prepare(self):
+            result = self._prepare()
+            if asyncio.iscoroutine(result):
+                result = await result
+
+        async def __start(self):
+            result = self._start()
+            if asyncio.iscoroutine(result):
+                result = await result
+
+        async def __pause(self):
+            result = self._pause()
+            if asyncio.iscoroutine(result):
+                result = await result
+
+        async def __stop(self):
+            result = self._stop()
+            if asyncio.iscoroutine(result):
+                result = await result
+
+        async def __cleanup(self, exception):
+            result = self._cleanup(exception)
+            if asyncio.iscoroutine(result):
+                result = await result

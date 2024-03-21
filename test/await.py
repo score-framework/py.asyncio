@@ -11,7 +11,7 @@ def test_stopped_loop():
         task_done = True
 
     mod = init({})
-    mod.await(task())
+    mod.await_(task())
     assert task_done
 
 
@@ -25,5 +25,5 @@ def test_running_loop():
 
     mod = init({})
     with mod.start_loop():
-        mod.await(task())
+        mod.await_(task())
         assert task_done

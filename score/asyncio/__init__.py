@@ -1,4 +1,5 @@
 # Copyright © 2017,2018 STRG.AT GmbH, Vienna, Austria
+# Copyright © 2019-2023 Necdet Can Ateşman, Vienna, Austria
 #
 # This file is part of the The SCORE Framework.
 #

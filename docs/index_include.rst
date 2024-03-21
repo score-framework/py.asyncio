@@ -138,7 +138,7 @@ API
 
     .. automethod:: release_loop
 
-    .. automethod:: await
+    .. automethod:: await_
 
     .. automethod:: await_multiple
 
